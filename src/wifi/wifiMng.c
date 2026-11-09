@@ -488,10 +488,16 @@ esp_err_t wifi_switch_ap_channel_csa(uint8_t new_channel)
         esp_wifi_usb_set_channel(new_channel);
     }
     #endif
-    // Pausa tattica: diamo tempo al telefono di accorgersi del salto 
-    // e di "inseguire" l'ESP32 sul nuovo canale prima di iniziare a inondare
-    // l'etere di pacchetti deauth (che potrebbero causare packet loss alla dashboard).
-    vTaskDelay(pdMS_TO_TICKS(5000)); 
+
+    /* No settle delay here on purpose. This function used to sleep for 5
+     * seconds to give clients time to follow the SoftAP to the new channel,
+     * but it is called from the websocket command task, which is the single
+     * task that serialises *every* dashboard command. Sleeping here froze the
+     * whole control channel for 5 s, so the "attack started" reply was only
+     * queued after the browser had already lost the socket and the command
+     * timed out. Callers that need to wait must do it in their own task. */
+    ESP_LOGW(TAG, "SoftAP moved to CH %d: associated clients are dropped by the "
+                  "interface restart and have to rejoin.", new_channel);
     return ESP_OK;
 }
 

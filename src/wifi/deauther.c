@@ -11,11 +11,17 @@
 #include "wifi_attacks.h"
 #include "wifiMng.h"
 #include "TaskManager.h"
+#include "config.h"
 
 
 #define DEAUTHER_TASK_PRIO 5
 // Syncronization times
-#define CHANNEL_SWITCH_DELAY        10   // Channel switch assestment time
+/* Moving the radio to the target channel through remain-on-channel is not
+ * instant: the ROC request is asynchronous and the frame burst fires right
+ * after this delay. With 10 ms the first burst was still going out on the home
+ * channel whenever the SoftAP was not moved (ATTACK_LOCK_AP_CHANNEL 0). 30 ms
+ * covers the ROC set-up. */
+#define CHANNEL_SWITCH_DELAY        30   // Channel switch assestment time
 #define ATTACK_WINDOW               150  // RCO duration
 #define SOFTAP_REST_TIME            500   // Home channel time
 #define SINGLE_TARGET_ROOM          80
@@ -380,9 +386,14 @@ esp_err_t deauther_start(const target_info_t *deauth_target, deauther_attack_typ
         return ESP_ERR_INVALID_STATE;
     }
 
-    if( deauther_task_handle != NULL ) {   
-        ESP_LOGE(TAG, "Deauther task already started.");
-        return ESP_ERR_INVALID_STATE;
+    /* Restart semantics. A second START while an attack is already running is
+     * the normal reaction to "the dashboard blinked out, did it actually
+     * start?" -- and it used to fail with ESP_ERR_INVALID_STATE, which the web
+     * UI rendered as "Failed to start Deauth Attack" even though the attack
+     * was running perfectly well. Tear the old one down and carry on. */
+    if( deauther_task_handle != NULL ) {
+        ESP_LOGW(TAG, "Deauth task already running, restarting with the new target.");
+        deauther_stop();
     }
 
     bool broadcast_target = isMacBroadcast(deauth_target->bssid);
@@ -409,10 +420,23 @@ esp_err_t deauther_start(const target_info_t *deauth_target, deauther_attack_typ
     deauther_running = true;
     target_set(deauth_target, TARGET_INFO_DEAUTHER);
 
-    /* Switch channel */
+    /* Switch channel.
+     *
+     * Only done when ATTACK_LOCK_AP_CHANNEL is enabled. Moving the SoftAP is
+     * the single most disruptive thing this firmware can do to the dashboard:
+     * esp_wifi_set_config() on a running AP tears the interface down and
+     * re-creates it, so every associated client is deauthenticated. That is
+     * what produced the "Connection lost. Reconnecting..." immediately after
+     * "Starting Attack", and why the reply frame never reached the browser.
+     *
+     * By default the SoftAP stays where it is and deauther_send_frames()
+     * reaches the target channel with wifi_set_temporary_channel() (ROC) --
+     * the same mechanism the channel-hopping path already relies on. */
+#if ATTACK_LOCK_AP_CHANNEL
     if(deauth_target->channel != 0){
         wifi_switch_ap_channel_csa(deauth_target->channel);
     }
+#endif
 
     task_manager_create_task(deauther_task, "deauther_task", 4096, NULL, DEAUTHER_TASK_PRIO, &deauther_task_handle);
     ESP_LOGI(TAG, "Deauth Attack Started.");

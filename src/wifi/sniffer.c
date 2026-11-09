@@ -18,6 +18,7 @@
 #include "karma_attack.h"
 #include "deauther.h"
 #include "TaskManager.h"
+#include "config.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
     #include "esp_wifi_usb.h"
@@ -1175,11 +1176,23 @@ void wifi_sniffer_set_fine_filter(int type, uint32_t subtype, uint8_t channel)
         if(wifi_usb_present()) {
             esp_wifi_usb_set_channel(channel);
         }
-        else 
+        else
         #endif
+        #if ATTACK_LOCK_AP_CHANNEL
         {
             wifi_switch_ap_channel_csa(channel);
         }
+        #else
+        {
+            /* Leave the SoftAP where it is. See ATTACK_LOCK_AP_CHANNEL in
+             * config.h: moving it restarts the interface and kicks the
+             * dashboard off. The caller follows up with
+             * wifi_sniffer_start_channel_hopping(channel), which parks the
+             * radio on the captured channel through remain-on-channel and
+             * hands it back to the SoftAP in between windows. */
+            ESP_LOGI(TAG, "Capturing on CH %d without moving the SoftAP.", channel);
+        }
+        #endif
     }
 
     wifi_promiscuous_filter_t filter = {0};
@@ -1697,8 +1710,15 @@ static void wifi_sniffer_channel_hopping_task(void *param)
 
     uint8_t target_channel = (uint8_t)(uintptr_t)param;
     uint8_t current_channel = 1;
-    const uint32_t ROC_DURATION_MS = 50;
-    const uint32_t AP_REST_TIME_MS = 100;
+    /* A fixed channel means the caller wants to sit there and capture (EAPOL
+     * hunt, packet analyzer), so give it a much bigger slice of the radio --
+     * otherwise the SoftAP keeps 75% of the airtime and handshakes slip
+     * through the gaps. The SoftAP is still silent for AP_REST_TIME_MS per
+     * cycle, well under two beacon intervals at the default 100 ms, so
+     * associated clients do not treat it as gone. Hopping keeps the original
+     * fast cadence: it only needs a snapshot of each channel. */
+    const uint32_t ROC_DURATION_MS = (target_channel != 0) ? 150 : 50;
+    const uint32_t AP_REST_TIME_MS = (target_channel != 0) ? 150 : 100;
     #if defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3)
     const uint32_t NEXT_CHANNEL_DELAY_MS = 300;
     #endif

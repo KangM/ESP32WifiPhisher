@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdio.h>
 #include <esp_timer.h>
 #include <esp_log.h>
 #include <cJSON.h>
@@ -883,8 +884,18 @@ static esp_err_t api_deauther_start(ws_frame_req_t *req)
     } 
     else if(deauth_start_err == ESP_ERR_INVALID_ARG) {
         api_send_status_frame(req, "bad", "Cant start this attack on Hidded SSID.");
+    } else if(deauth_start_err == ESP_ERR_NO_MEM) {
+        ESP_LOGE(TAG, "Deauth start failed: %s", esp_err_to_name(deauth_start_err));
+        api_send_status_frame(req, "bad", "Failed to start Deauth Attack: out of memory");
     } else {
-        api_send_status_frame(req, "bad", "Failed to start Deauth Attack");
+        /* Report the real reason: the generic message sent people chasing the
+         * wrong problem (a stale "already running" state looked like a start
+         * failure). */
+        ESP_LOGE(TAG, "Deauth start failed: %s", esp_err_to_name(deauth_start_err));
+        char msg[96];
+        snprintf(msg, sizeof(msg), "Failed to start Deauth Attack: %s",
+                 esp_err_to_name(deauth_start_err));
+        api_send_status_frame(req, "bad", msg);
     }
     
     return ESP_OK;
