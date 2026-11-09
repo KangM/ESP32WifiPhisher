@@ -128,5 +128,14 @@
   "mgmt_ap_ssid": "SSID AP de Administración",
   "password": "Contraseña",
   "btn_save_reboot": "GUARDAR Y REINICIAR",
-  "sys_ready": "Listo."
+  "sys_ready": "Listo.",
+  "deauth_btn_stop_attack": "DETENER ATAQUE",
+  "deauth_state_idle": "INACTIVO",
+  "deauth_state_running": "EN EJECUCIÓN",
+  "deauth_state_starting": "INICIANDO...",
+  "deauth_state_stopping": "DETENIENDO...",
+  "deauth_state_idle_hint": "Ningún ataque en curso.",
+  "deauth_state_pending_hint": "Esperando confirmación del ESP32...",
+  "deauth_state_tx": "TRAMAS TX",
+  "deauth_state_syncing": "SINCRONIZANDO..."
 }

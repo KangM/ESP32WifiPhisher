@@ -128,5 +128,14 @@
   "mgmt_ap_ssid": "SSID Punto d'Accesso di Gestione",
   "password": "Password",
   "btn_save_reboot": "SALVA E RIAVVIA",
-  "sys_ready": "Pronto."
+  "sys_ready": "Pronto.",
+  "deauth_btn_stop_attack": "FERMA ATTACCO",
+  "deauth_state_idle": "INATTIVO",
+  "deauth_state_running": "IN ESECUZIONE",
+  "deauth_state_starting": "AVVIO...",
+  "deauth_state_stopping": "ARRESTO...",
+  "deauth_state_idle_hint": "Nessun attacco in corso.",
+  "deauth_state_pending_hint": "In attesa di conferma dall'ESP32...",
+  "deauth_state_tx": "FRAME TX",
+  "deauth_state_syncing": "SINCRONIZZO..."
 }

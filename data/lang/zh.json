@@ -128,5 +128,14 @@
   "mgmt_ap_ssid": "管理AP SSID",
   "password": "密码",
   "btn_save_reboot": "保存并重启",
-  "sys_ready": "就绪。"
+  "sys_ready": "就绪。",
+  "deauth_btn_stop_attack": "停止攻击",
+  "deauth_state_idle": "空闲",
+  "deauth_state_running": "运行中",
+  "deauth_state_starting": "启动中...",
+  "deauth_state_stopping": "停止中...",
+  "deauth_state_idle_hint": "当前无攻击。",
+  "deauth_state_pending_hint": "等待设备确认...",
+  "deauth_state_tx": "已发帧",
+  "deauth_state_syncing": "同步中..."
 }

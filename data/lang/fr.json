@@ -128,5 +128,14 @@
   "mgmt_ap_ssid": "SSID AP de Gestion",
   "password": "Mot de passe",
   "btn_save_reboot": "ENREGISTRER ET REDÉMARRER",
-  "sys_ready": "Prêt."
+  "sys_ready": "Prêt.",
+  "deauth_btn_stop_attack": "ARRÊTER L'ATTAQUE",
+  "deauth_state_idle": "INACTIF",
+  "deauth_state_running": "EN COURS",
+  "deauth_state_starting": "DÉMARRAGE...",
+  "deauth_state_stopping": "ARRÊT...",
+  "deauth_state_idle_hint": "Aucune attaque en cours.",
+  "deauth_state_pending_hint": "En attente de confirmation de l'ESP32...",
+  "deauth_state_tx": "TRAMES TX",
+  "deauth_state_syncing": "SYNCHRONISATION..."
 }

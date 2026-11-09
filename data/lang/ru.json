@@ -128,5 +128,14 @@
   "mgmt_ap_ssid": "SSID ТД управления",
   "password": "Пароль",
   "btn_save_reboot": "СОХРАНИТЬ И ПЕРЕЗАГРУЗИТЬ",
-  "sys_ready": "Готово."
+  "sys_ready": "Готово.",
+  "deauth_btn_stop_attack": "ОСТАНОВИТЬ АТАКУ",
+  "deauth_state_idle": "ПРОСТОЙ",
+  "deauth_state_running": "РАБОТАЕТ",
+  "deauth_state_starting": "ЗАПУСК...",
+  "deauth_state_stopping": "ОСТАНОВКА...",
+  "deauth_state_idle_hint": "Атака не запущена.",
+  "deauth_state_pending_hint": "Ожидание подтверждения от ESP32...",
+  "deauth_state_tx": "КАДРЫ TX",
+  "deauth_state_syncing": "СИНХРОНИЗАЦИЯ..."
 }

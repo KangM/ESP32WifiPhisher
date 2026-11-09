@@ -19,6 +19,26 @@
             --terminal-bg: #000000;
         }
 
+        /* ---- Deauth attack state strip ---- */
+        @keyframes deauth-pulse {
+            0%   { box-shadow: 0 0 0 0 rgba(255, 82, 82, 0.5); }
+            70%  { box-shadow: 0 0 0 7px rgba(255, 82, 82, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 82, 82, 0); }
+        }
+        #deauth-state-box { display:flex; align-items:center; gap:12px; margin-top:20px; padding:12px 14px;
+            background:#121212; border:1px solid var(--border); border-left:3px solid #3a3a3a;
+            border-radius:4px; transition:background .25s, border-color .25s; }
+        #deauth-state-dot { width:10px; height:10px; border-radius:50%; background:#3a3a3a;
+            flex:0 0 auto; transition:background .25s; }
+        #deauth-state-label { font-weight:bold; font-size:0.9rem; color:#888; letter-spacing:0.5px; }
+        #deauth-state-detail { font-size:0.72rem; color:#666; font-family:monospace; margin-top:3px; word-break:break-all; }
+        #deauth-state-box.is-running { border-left-color:var(--danger); border-color:#4a2020; background:rgba(255,82,82,0.06); }
+        #deauth-state-box.is-running #deauth-state-detail { color:#b98a8a; }
+        #deauth-state-dot.is-running { background:var(--danger); animation:deauth-pulse 1.6s infinite; }
+        #deauth-state-box.is-busy { border-left-color:#ffab40; border-color:#4a3a1f; background:rgba(255,171,64,0.06); }
+        #deauth-state-dot.is-busy { background:#ffab40; }
+        #btn-deauth-toggle { flex:1; transition:opacity .2s, background .2s; }
+
         body {
             font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             margin: 0;
@@ -1179,9 +1199,16 @@
                     <span id="deauth-warning-text" data-i18n="deauth_warning_text">This will disconnect clients from the selected Access Point.</span>
                 </p>
 
+                <div id="deauth-state-box">
+                    <span id="deauth-state-dot"></span>
+                    <div style="flex:1; min-width:0;">
+                        <div id="deauth-state-label">IDLE</div>
+                        <div id="deauth-state-detail">No attack running.</div>
+                    </div>
+                </div>
+
                 <div class="btn-group">
-                    <button class="danger" onclick="startDeauth()" data-i18n="btn_start_attack">START ATTACK</button>
-                    <button class="secondary" onclick="stopDeauth()" data-i18n="btn_stop">STOP</button>
+                    <button id="btn-deauth-toggle" class="danger" onclick="toggleDeauth()">START ATTACK</button>
                 </div>
             </div>
 
@@ -1686,7 +1713,11 @@
                 // 4. Esecuzione logiche specifiche (protette da try interno)
                 if (viewId === 'view-settings') loadApSettings();
                 if (viewId === 'view-passwords') fetchPasswords();
-                if (viewId === 'view-deauth') updateDeauthUI();
+                if (viewId === 'view-deauth') {
+                    updateDeauthUI();
+                    renderDeauthState();
+                    requestSystemStatus();   // don't show a state up to 5 s stale
+                }
                 
                 // Se è Recon, aggiorna i dati ma non bloccare l'interfaccia
                 if (viewId === 'view-recon') {
@@ -2010,6 +2041,8 @@
                     }
                 });
 
+                renderDeauthState();   // the toggle button is not a data-i18n element
+
                 const activeMenuItem = document.querySelector('.menu-item.active span[data-i18n]');
                 if (activeMenuItem) document.getElementById('page-title').innerText = activeMenuItem.innerText;
 
@@ -2064,6 +2097,21 @@
                 let activeModules = [];
                 if(data.et_running) { setActive(modEt, "var(--accent)"); activeModules.push("EVIL TWIN"); }
                 if(data.deauth_running) { setActive(modDeauth, "var(--danger)"); activeModules.push("DEAUTH"); }
+
+                /* Reconcile the deauth button with the device. This status
+                 * frame, not the click handler, is the authoritative source. */
+                if (typeof data.deauth_running !== 'undefined') {
+                    deauthRunning = !!data.deauth_running;
+                    deauthTxSent = data.tx_sent || 0;
+                    if (deauthPending === 'start' && deauthRunning) deauthPending = null;
+                    if (deauthPending === 'stop' && !deauthRunning) deauthPending = null;
+                    if (deauthPending === 'sync') deauthPending = null;   // device answered
+                    /* Drop the remembered target as soon as the device says it
+                     * is idle -- but not while a start is still in flight, or
+                     * the reply would have nothing to describe. */
+                    if (!deauthRunning && deauthPending === null) deauthApplied = null;
+                    renderDeauthState();
+                }
                 if(data.karma_running) { setActive(modKarma, "#e040fb"); activeModules.push("KARMA"); }
 
                 const gbParent = document.getElementById('global-status-badge');
@@ -2352,6 +2400,13 @@
         }
 
         function selectTarget(ssid, bssid, channel, signal, authmode) {
+            if (deauthRunning) {
+                /* The attack keeps the parameters it was started with, so a new
+                 * selection only takes effect on the next start. Say so instead
+                 * of silently showing a target that is not being attacked. */
+                showToast("Deauth is running \u2014 stop it to retarget");
+                log("Deauth still running on the previous target; this selection applies to the next start.", "warning");
+            }
             currentTarget = { ssid, bssid, channel, signal, authmode };
 
             /* Keep the capture channel aligned with the target. When they drift
@@ -2529,7 +2584,104 @@
             } catch(e) { area.value = "Connection Error"; }
         }
 
+        // ==========================================
+        // DEAUTH ATTACK STATE
+        // One button, driven by what the device reports.
+        // GET_STATUS carries deauth_running and is polled every 5 s, so the
+        // button cannot drift away from reality the way it did while START and
+        // STOP were two independent buttons that nothing ever updated: press
+        // START, lose the reply frame, and the page still looked idle while
+        // the radio was busy. A click now only moves the UI into a transient
+        // STARTING / STOPPING state; the device has the last word.
+        // ==========================================
+        let deauthRunning = false;
+        let deauthPending = null;    // null | 'start' | 'stop'
+        let deauthApplied = null;    // what the running attack was started with
+        let deauthTxSent = 0;        // frames transmitted, reported by GET_STATUS
+
+        function deauthT(key, fallback) {
+            return currentTranslations[key] || fallback;
+        }
+
+        /* The status poll runs every 5 s, so a lost reply normally resolves
+         * itself almost immediately. If the websocket is gone too, the button
+         * would stay locked forever -- release it after one more poll window
+         * and fall back to the last state we knew. */
+        function deauthSyncFallback() {
+            setTimeout(() => {
+                if (deauthPending === 'sync') {
+                    deauthPending = null;
+                    renderDeauthState();
+                    log("Still no status from the ESP32 \u2014 showing the last known attack state.", "warning");
+                }
+            }, 8000);
+        }
+
+        function renderDeauthState() {
+            const btn = document.getElementById('btn-deauth-toggle');
+            const box = document.getElementById('deauth-state-box');
+            const dot = document.getElementById('deauth-state-dot');
+            const label = document.getElementById('deauth-state-label');
+            const detail = document.getElementById('deauth-state-detail');
+            if (!btn || !box || !dot || !label || !detail) return;
+
+            const phase = deauthPending === 'start' ? 'starting'
+                        : deauthPending === 'stop'  ? 'stopping'
+                        : deauthPending === 'sync'  ? 'syncing'
+                        : deauthRunning            ? 'running'
+                        : 'idle';
+            const busy = (phase === 'starting' || phase === 'stopping' || phase === 'syncing');
+
+            box.classList.toggle('is-running', phase === 'running');
+            box.classList.toggle('is-busy', busy);
+            dot.classList.toggle('is-running', phase === 'running');
+            dot.classList.toggle('is-busy', busy);
+
+            if (phase === 'running') {
+                btn.innerText = deauthT('deauth_btn_stop_attack', 'STOP ATTACK');
+                label.innerText = deauthT('deauth_state_running', 'RUNNING');
+                label.style.color = 'var(--danger)';
+                const parts = [];
+                if (deauthApplied) {
+                    parts.push(deauthApplied.ssid || '[HIDDEN]');
+                    parts.push(deauthApplied.channel ? ('CH ' + deauthApplied.channel) : 'HOPPING');
+                    if (deauthApplied.type) parts.push(deauthApplied.type);
+                }
+                parts.push(deauthT('deauth_state_tx', 'TX FRAMES') + ': ' + deauthTxSent);
+                detail.innerText = parts.join('  \u00b7  ');
+            } else if (busy) {
+                const word = phase === 'starting'
+                    ? deauthT('deauth_state_starting', 'STARTING...')
+                    : phase === 'stopping'
+                    ? deauthT('deauth_state_stopping', 'STOPPING...')
+                    : deauthT('deauth_state_syncing', 'SYNCING...');
+                btn.innerText = word;
+                label.innerText = word;
+                label.style.color = '#ffab40';
+                detail.innerText = deauthT('deauth_state_pending_hint', 'Waiting for the ESP32 to confirm...');
+            } else {
+                btn.innerText = deauthT('btn_start_attack', 'START ATTACK');
+                label.innerText = deauthT('deauth_state_idle', 'IDLE');
+                label.style.color = '#888';
+                detail.innerText = deauthT('deauth_state_idle_hint', 'No attack running.');
+            }
+
+            btn.disabled = busy;
+            btn.style.opacity = busy ? '0.6' : '1';
+            btn.style.cursor = busy ? 'progress' : 'pointer';
+
+            /* Freeze the configuration while the radio is busy: editing it used
+             * to look like it took effect, while the running attack silently
+             * kept the parameters it was started with. */
+            ['deauth-mode', 'deauth-frame-type', 'deauth-broadcast-channel'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = (deauthRunning || busy);
+            });
+        }
+
         async function startDeauth() {
+            if (deauthPending) return;   // a click is already in flight
+
             const mode = document.getElementById('deauth-mode').value;
             const selectEl = document.getElementById('deauth-frame-type');
             const frameType = parseInt(selectEl.value);
@@ -2546,7 +2698,19 @@
                 targetBssid = currentTarget.bssid; targetChannel = currentTarget.channel; targetSsid = currentTarget.ssid;
                 log(`Starting Attack on ${currentTarget.ssid} (Type: ${attackName})...`, "warning");
             }
-            
+
+            /* Remember what we asked for. While the attack runs this is what
+             * the status line reports, so a later target selection cannot make
+             * the page look like it is attacking something it is not. */
+            deauthApplied = {
+                ssid: mode === 'broadcast' ? "ALL NETWORKS" : targetSsid,
+                bssid: targetBssid,
+                channel: targetChannel,
+                type: attackName
+            };
+            deauthPending = 'start';
+            renderDeauthState();
+
             try {
                 const res = await sendCommand(CMD.START_DEAUTHER, {
                     ssid: targetSsid,
@@ -2555,27 +2719,54 @@
                     mode: mode,
                     packet_type: frameType
                 });
-                
-                if(res.status === 'ok') {
+
+                deauthPending = null;
+                if (res.status === 'ok') {
+                    deauthRunning = true;
                     showToast("Attack STARTED");
+                    log("Deauth attack is running.", "success");
                 } else {
-                    showToast("Error starting attack");
                     log("Server Error: " + res.message, "error");
+                    showToast("Attack NOT started \u2014 see log");
+                    requestSystemStatus();   // the device may have changed state anyway
                 }
             } catch(e) {
-                log("Error starting Deauth: " + e, "error");
+                /* The reply frame was lost, which says nothing about whether the
+                 * command ran -- the ESP32 restarts the attack either way now.
+                 * Do not guess: hold SYNCING until the status frame answers,
+                 * instead of dropping back to IDLE as if nothing had happened. */
+                deauthPending = 'sync';
+                log("No reply from the ESP32 (" + e + ") \u2014 re-syncing with the device...", "warning");
+                requestSystemStatus();
+                deauthSyncFallback();
             }
+            renderDeauthState();
         }
-        
+
+        function toggleDeauth() {
+            if (deauthPending) return;
+            if (deauthRunning) stopDeauth(); else startDeauth();
+        }
+
         async function stopDeauth() {
+            if (deauthPending) return;
+            deauthPending = 'stop';
+            renderDeauthState();
+            log("Stopping deauth attack... please wait...", "warning");
             try {
-                log("Stopping deauth attack... please wait...", "warning");
                 await sendCommand(CMD.STOP_DEAUTHER);
+                deauthRunning = false;
+                deauthApplied = null;
+                deauthPending = null;
                 showToast("Attack STOPPED");
                 log("Deauth attack stopped.", "success");
             } catch(e) {
-                log("Error stopping: " + e, "error");
+                deauthPending = 'sync';
+                log("No reply from the ESP32 (" + e + ") \u2014 re-syncing with the device...", "warning");
+                requestSystemStatus();
+                deauthSyncFallback();
             }
+            renderDeauthState();
         }
         
         async function startCapture() {
@@ -3645,7 +3836,14 @@
             populateChannels();
             populateReconChannels();
             populateDeauthChannels();
+            renderDeauthState();
             log("System UI Initialized.");
+            /* Polling is paused while the tab is hidden (document.hidden), so
+             * pull a fresh state when the user comes back instead of showing a
+             * stale attack state until the next 5 s tick. */
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) requestSystemStatus();
+            });
             // Ritardo di 800ms per permettere all'ESP32 di chiudere il socket HTTP
             // prima di dover gestire l'handshake del WebSocket.
             setTimeout(connectWS, 1000);
