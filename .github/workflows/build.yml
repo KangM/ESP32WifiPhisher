@@ -1,0 +1,90 @@
+name: build-firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "PlatformIO environment to build"
+        type: choice
+        default: esp32s3
+        options:
+          - esp32s3
+          - esp32c5
+          - esp32c6
+          - esp32c3
+          - esp32s2
+          - esp32
+          - cardputer
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      envs: ${{ steps.set.outputs.envs }}
+    steps:
+      - id: set
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo 'envs=["${{ inputs.env }}"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'envs=["esp32s3","esp32c5","esp32","esp32c3","esp32c6"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        env: ${{ fromJSON(needs.prepare.outputs.envs) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Cold builds pull a full ESP-IDF 5.5 toolchain plus, for esp32c5, a git
+      # fork of the platform package. Without cache a build takes well over ten
+      # minutes; with it, two to three.
+      - name: Cache PlatformIO and pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ matrix.env }}-${{ hashFiles('platformio.ini', 'dependencies.lock', 'partition.csv', 'sdkconfig.*', 'scripts/merge_bins.py') }}
+          restore-keys: |
+            pio-${{ matrix.env }}-
+
+      - name: Install PlatformIO
+        run: pip install -U platformio
+
+      # webflash runs buildprog + buildfs, then calls scripts/merge_bins.py
+      # which emits dist/<env>-merged.bin at the right bootloader offset.
+      - name: Build app + filesystem + merged image
+        run: pio run -e ${{ matrix.env }} -t webflash
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp -v dist/${{ matrix.env }}-merged.bin out/ || true
+          cp -v .pio/build/${{ matrix.env }}/firmware.bin out/${{ matrix.env }}-app.bin || true
+          cp -v .pio/build/${{ matrix.env }}/spiffs.bin  out/${{ matrix.env }}-spiffs.bin  || true
+          ls -l out
+          sha256sum out/* > out/SHA256SUMS.txt || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.env }}-firmware
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
