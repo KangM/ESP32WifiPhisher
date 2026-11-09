@@ -1974,12 +1974,16 @@
                 pendingRequests.set(id, { resolve, reject });
                 const payload = JSON.stringify({ cmd: cmdId, req_id: id, ...params });
                 ws.send(payload);
+                /* 12 s instead of 30: the device answers in well under a second
+                 * whenever the reply actually leaves the radio, so a long wait
+                 * only delays the diagnosis. Anything longer than this means
+                 * the frame was lost, not that the ESP32 is still thinking. */
                 setTimeout(() => {
                     if (pendingRequests.has(id)) {
                         pendingRequests.delete(id);
-                        reject("Timeout waiting for ESP32");
+                        reject("no reply from the ESP32 (frame lost, command may still have run)");
                     }
-                }, 30000); 
+                }, 12000); 
             });
         }
 
@@ -2349,6 +2353,17 @@
 
         function selectTarget(ssid, bssid, channel, signal, authmode) {
             currentTarget = { ssid, bssid, channel, signal, authmode };
+
+            /* Keep the capture channel aligned with the target. When they drift
+             * apart the dashboard deauths on one channel while the sniffer sits
+             * on another, so the 4-way handshake is never recorded even though
+             * both look like they are running. */
+            const sniffChan = document.getElementById('sniff-chan');
+            if (sniffChan && !sniffChan.disabled && channel) {
+                sniffChan.value = String(channel);
+                log(`Capture channel aligned to CH ${channel}`, "info");
+            }
+
             document.getElementById('current-target-ssid').innerText = ssid;
             document.getElementById('current-target-bssid').innerText = bssid;
             document.getElementById('home-ssid').innerText = ssid;
