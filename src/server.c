@@ -18,6 +18,32 @@ static uint8_t attack_scheme = 0xff;
 static QueueHandle_t ws_frame_queue = NULL;
 static TaskHandle_t ws_frame_process_task_handle = NULL;
 
+/* Max sockets handed to httpd is bounded by CONFIG_LWIP_MAX_SOCKETS - 3.
+ * The old value (10) left almost no headroom: one reconnect during a send
+ * error was enough to exhaust the pool and have LRU purge the live socket. */
+#define WS_MAX_OPEN_SOCKETS 13
+#define WS_SEND_MAX_ATTEMPTS      2
+#define WS_SEND_RETRY_DELAY_MS   20
+
+/* A single failed async send used to tear the WebSocket down immediately,
+ * which the UI reports as "Connection lost. Reconnecting...". On a loaded
+ * 2.4 GHz channel a short frame can lose the race against a stronger AP and
+ * time out once; retrying briefly is far cheaper than a full reconnect. */
+static esp_err_t ws_send_with_retry(httpd_handle_t hd, int fd, httpd_ws_frame_t *frame)
+{
+    esp_err_t ret = ESP_FAIL;
+    for (int attempt = 0; attempt < WS_SEND_MAX_ATTEMPTS; attempt++) {
+        ret = httpd_ws_send_frame_async(hd, fd, frame);
+        if (ret == ESP_OK) {
+            return ESP_OK;
+        }
+        ESP_LOGD(TAG, "WS send attempt %d failed on fd=%d: %s",
+                 attempt + 1, fd, esp_err_to_name(ret));
+        vTaskDelay(pdMS_TO_TICKS(WS_SEND_RETRY_DELAY_MS));
+    }
+    return ret;
+}
+
 
 static void ws_send_work(void *arg)
 {
@@ -31,13 +57,12 @@ static void ws_send_work(void *arg)
     };
 	/* BROADCAST */
 	if (r->fd == -1) {
-        size_t fds = 10;
-        int client_fds[10];
+        size_t fds = WS_MAX_OPEN_SOCKETS;
+        int client_fds[WS_MAX_OPEN_SOCKETS];
         if (httpd_get_client_list(r->hd, &fds, client_fds) == ESP_OK) {
             for (int i = 0; i < fds; i++) {
 				if (httpd_ws_get_fd_info(r->hd, client_fds[i]) == HTTPD_WS_CLIENT_WEBSOCKET) {
-                    esp_err_t ret = httpd_ws_send_frame_async(r->hd, client_fds[i], &out);
-                    if (ret != ESP_OK) {
+                    if (ws_send_with_retry(r->hd, client_fds[i], &out) != ESP_OK) {
                         httpd_sess_trigger_close(r->hd, client_fds[i]);
                     }
                 }
@@ -46,8 +71,7 @@ static void ws_send_work(void *arg)
     } 
 	/* UNICAST */
     else {
-		esp_err_t ret = httpd_ws_send_frame_async(r->hd, r->fd, &out);
-        if (ret != ESP_OK) {
+        if (ws_send_with_retry(r->hd, r->fd, &out) != ESP_OK) {
              httpd_sess_trigger_close(r->hd, r->fd);
         }
     }
@@ -374,7 +398,7 @@ void http_server_start(void)
 	config.ctrl_port = 81;
 	config.server_port = 80;
 	config.uri_match_fn = httpd_uri_match_wildcard;
-	config.max_open_sockets = 10;
+	config.max_open_sockets = WS_MAX_OPEN_SOCKETS;
 	config.max_resp_headers = 16;
 	config.recv_wait_timeout = 10;
 	config.send_wait_timeout = 10;

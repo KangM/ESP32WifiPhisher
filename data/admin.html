@@ -1905,12 +1905,21 @@
                 if (statusInterval) clearInterval(statusInterval);
                 if (reconPollingInterval) clearInterval(reconPollingInterval);
                 document.querySelector('.top-bar').style.borderBottom = "1px solid var(--border)";
-                statusInterval = setInterval(requestSystemStatus, 2000);
+                // Polling was the main source of dropped WebSocket sessions on a
+                // congested channel: status every 2s plus two several-KB recon
+                // payloads every 5s kept the socket busy almost continuously.
+                // Paused while the tab is in the background, where nothing is
+                // being displayed anyway.
+                statusInterval = setInterval(() => {
+                    if (document.hidden) return;
+                    requestSystemStatus();
+                }, 5000);
                 // Alternate polling
                 reconPollingInterval = setInterval(() => {
+                    if (document.hidden) return;
                     fetchReconDataAp();
                     setTimeout(fetchReconDataCli, 2000);
-                }, 5000);
+                }, 8000);
             };
 
             ws.onclose = () => {
