@@ -73,18 +73,28 @@ jobs:
       - name: Build app + filesystem + merged image
         run: pio run -e ${{ matrix.env }} -t webflash
 
+      # Every artefact carries the short commit id, so a bin pulled off the
+      # runner can always be traced back to the exact source it was built from.
+      - name: Compute short commit id
+        id: meta
+        run: echo "short_sha=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Collect artifacts
+        env:
+          SHORT: ${{ steps.meta.outputs.short_sha }}
+          ENVNAME: ${{ matrix.env }}
         run: |
           mkdir -p out
-          cp -v dist/${{ matrix.env }}-merged.bin out/ || true
-          cp -v .pio/build/${{ matrix.env }}/firmware.bin out/${{ matrix.env }}-app.bin || true
-          cp -v .pio/build/${{ matrix.env }}/spiffs.bin  out/${{ matrix.env }}-spiffs.bin  || true
+          cp -v "dist/${ENVNAME}-merged.bin" "out/${ENVNAME}-${SHORT}-merged.bin"
+          cp -v ".pio/build/${ENVNAME}/firmware.bin" "out/${ENVNAME}-${SHORT}-app.bin"
+          cp -v ".pio/build/${ENVNAME}/spiffs.bin" "out/${ENVNAME}-${SHORT}-spiffs.bin"
           ls -l out
-          sha256sum out/* > out/SHA256SUMS.txt || true
+          sha256sum out/* > "out/${ENVNAME}-${SHORT}-SHA256SUMS.txt"
+          cat "out/${ENVNAME}-${SHORT}-SHA256SUMS.txt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.env }}-firmware
+          name: ${{ matrix.env }}-${{ steps.meta.outputs.short_sha }}-firmware
           path: out/
           if-no-files-found: error
           retention-days: 30
